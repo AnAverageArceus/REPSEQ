@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using rnd = UnityEngine.Random;
-using KModkit;
 
 public class REPSEQ : MonoBehaviour {
 
@@ -61,13 +59,96 @@ public class REPSEQ : MonoBehaviour {
     int moduleId;
     private bool moduleSolved;
 
+    private REPSEQSettings Settings;
+    sealed class REPSEQSettings
+    {
+        public int MinimumGoalInterval = 11;
+        public int MaximumGoalInterval = 20;
+        public int CorrectPressGain = 2;
+        public int OnbeatPressGain = 1;
+        public int IncorrectPressLoss = 1;
+        public int ExtraPressLoss = 4;
+        public int PerfectSequenceBonus = 20;
+        public bool DisableMovingButtons = false;
+        public bool DisableRotations = false;
+    }
+
+    bool easysettings = false; //This variable is set to true if any mod settings are deemed "too easy"
+
     void Awake()
     {
         moduleId = moduleIdCounter++;
+        var modConfig = new ModConfig<REPSEQSettings>("REPSEQ"); //LOADING MOD SETTINGS
+        Settings = modConfig.Settings;
+        modConfig.Settings = Settings;
+        Debug.LogFormat("[REPSEQ #{0}] Attempting to load mod settings...", moduleId);
+        if ((Settings.MinimumGoalInterval > Settings.MaximumGoalInterval) || Settings.MinimumGoalInterval <= 0) //Checking possible goal scores and their validity
+        {
+            Debug.LogFormat("[REPSEQ #{0}] Invalid goal interval found! Reverting to default (11-20)", moduleId);
+            Settings.MinimumGoalInterval = 11; Settings.MaximumGoalInterval = 20;
+        }
+        else if ((Settings.MinimumGoalInterval != 11) || (Settings.MaximumGoalInterval != 20))
+        {
+            Debug.LogFormat("[REPSEQ #{0}] Provided goal interval is valid. Your goal will be a multiple of 20 between {1} and {2}.", moduleId, Settings.MinimumGoalInterval*20, Settings.MaximumGoalInterval*20);
+            if ((Settings.MinimumGoalInterval < 6) || (Settings.MaximumGoalInterval < 12)) easysettings = true;
+        }
+        if ((Settings.CorrectPressGain <= 0) && (Settings.OnbeatPressGain <= 0) && (Settings.IncorrectPressLoss >= 0) && (Settings.ExtraPressLoss >= 0) && (Settings.PerfectSequenceBonus <= 0)) //Checking scoring
+        {
+            Debug.LogFormat("[REPSEQ #{0}] The provided scoring settings make the module impossible! Reverting to default (2+1-1-4+20)", moduleId);
+            Settings.CorrectPressGain = 2;
+            Settings.OnbeatPressGain = 1;
+            Settings.IncorrectPressLoss = 1;
+            Settings.ExtraPressLoss = 4;
+            Settings.PerfectSequenceBonus = 20;
+        }
+        else if ((Settings.CorrectPressGain != 2) || (Settings.OnbeatPressGain != 1) || (Settings.IncorrectPressLoss != 1) || (Settings.ExtraPressLoss != 4) || (Settings.PerfectSequenceBonus != 20))
+        {
+            Debug.LogFormat("[REPSEQ #{0}] Provided scoring is valid. What follows is a rundown of everything provided.", moduleId);
+            if (Settings.CorrectPressGain > 0) Debug.LogFormat("[REPSEQ #{0}] A correct press will add {1} to your score.", moduleId, Settings.CorrectPressGain);
+            else if (Settings.CorrectPressGain == 0) Debug.LogFormat("[REPSEQ #{0}] A correct press will not do anything.", moduleId);
+            else Debug.LogFormat("[REPSEQ #{0}] A correct press will subtract {1} from your score. Why would you do this?", moduleId, Settings.CorrectPressGain * -1);
+            if ((Settings.MaximumGoalInterval / Settings.CorrectPressGain) < 4) easysettings = true;
+
+            if (Settings.OnbeatPressGain > 0) Debug.LogFormat("[REPSEQ #{0}] A correct press that's also on-beat will add an extra {1}.", moduleId, Settings.OnbeatPressGain);
+            else if (Settings.OnbeatPressGain == 0) Debug.LogFormat("[REPSEQ #{0}] Pressing on the beat won't affect your score.", moduleId);
+            else Debug.LogFormat("[REPSEQ #{0}] A correct press that's also on-beat will instead subtract {1} from that. Sure, I guess.", moduleId, Settings.OnbeatPressGain * -1);
+            if ((Settings.MaximumGoalInterval / Settings.OnbeatPressGain) < 4) easysettings = true;
+
+            if (Settings.IncorrectPressLoss > 0) { Debug.LogFormat("[REPSEQ #{0}] An incorrect press will subtract {1}.", moduleId, Settings.IncorrectPressLoss); if ((Settings.MaximumGoalInterval / Settings.IncorrectPressLoss) <= 1) Debug.LogFormat("[REPSEQ #{0}] ...Okay, that seems a bit cruel. Up to you, though.", moduleId); }
+            else if (Settings.IncorrectPressLoss == 0) Debug.LogFormat("[REPSEQ #{0}] An incorrect press won't hurt. Still skips to the next press, though.", moduleId);
+            else Debug.LogFormat("[REPSEQ #{0}] An incorrect press will... ADD {1}?! That's so silly! You're rewarding not bothering to remember this stuff! *ahem* Anyway...", moduleId, Settings.IncorrectPressLoss * -1);
+            if (Settings.IncorrectPressLoss <= 0) easysettings = true;
+
+            if (Settings.ExtraPressLoss > 0) Debug.LogFormat("[REPSEQ #{0}] Extraneous presses will subtract {1}.", moduleId, Settings.ExtraPressLoss);
+            else if (Settings.ExtraPressLoss == 0) Debug.LogFormat("[REPSEQ #{0}] Extraneous presses do nothing. And I mean nothing. Click to your heart's content.", moduleId);
+            else Debug.LogFormat("[REPSEQ #{0}] Extraneous pre- okay, I'm not changing it, but I will judge. YOU ARE JUST GOING TO SPAM. EVERY EXTRA PRESS GIVES YOU {1}. THIS IS INEXCUSEABLE. ........Okay, fine. Let's just move on to the last one...", moduleId, Settings.ExtraPressLoss * -1);
+            if (Settings.ExtraPressLoss <= 0) easysettings = true;
+
+            if (Settings.PerfectSequenceBonus > 0) Debug.LogFormat("[REPSEQ #{0}] If you get a perfect sequence, you'll get {1} as a reward!", moduleId, Settings.PerfectSequenceBonus);
+            else if (Settings.PerfectSequenceBonus == 0) Debug.LogFormat("[REPSEQ #{0}] If you get a perfect sequence... nothing happens. All that effort for nothing.", moduleId);
+            else Debug.LogFormat("[REPSEQ #{0}] If you get a perfect sequence, you're rewarded with a sweet sweet bonus of losing {1}. I feel like there's some sort of message you're trying to get across.", moduleId, Settings.PerfectSequenceBonus * -1);
+            if ((Settings.MaximumGoalInterval / Settings.PerfectSequenceBonus) < 1) easysettings = true;
+
+            Debug.LogFormat("[REPSEQ #{0}] This ends the scoring settings.", moduleId);
+        }
+        if (Settings.DisableMovingButtons)
+        {
+            Debug.LogFormat("[REPSEQ #{0}] The option to disable the buttons moving for sequences 3, 4, and 9 has been turned on! These will be replaced by a flash.", moduleId);
+            easysettings = true;
+            if (Settings.DisableRotations) Debug.LogFormat("[REPSEQ #{0}] You also disabled the rotations for 6, 8, and 10. Come on, at least appreciate the effort I put into this! And don't blame me if it feels lifeless, you did this to yourself.", moduleId);
+        }
+        else if (Settings.DisableRotations)
+        {
+            Debug.LogFormat("[REPSEQ #{0}] The option to disable the buttons rotating for sequences 6, 8, and 10 has been turned on! You'll just get the flashing for these ones.", moduleId);
+            easysettings = true;
+        }
+        if (easysettings) Debug.LogFormat("[REPSEQ #{0}] WARNING: Some of these mod settings make the module much easier than its default! If attempting a challenge bomb, please adjust these settings before your next attempt!", moduleId);
+        Debug.LogFormat("[REPSEQ #{0}] Mod settings now done loading. If nothing above this shows a change, all settings are set to default.", moduleId);
         stat.text = "";
         score.text = "";
         renderjudgement.transform.localScale = new Vector3(-0.05f, -0.05f, -0.05f); //Semi-debug code, just in case something stupid happens
-        goalscore = rnd.Range(11, 21) * 20;
+        goalscore = rnd.Range(Settings.MinimumGoalInterval, Settings.MaximumGoalInterval+1) * 20;
+        Debug.LogFormat("[REPSEQ #{0}] Your goal is to reach {1} points.", moduleId, goalscore);
         flashing = true;
         anim = renderjudgement.GetComponent<Animator>(); //Nabs the animator components from the corresponding assets, so animations can be played correctly
         beats = stattexts[1].GetComponent<Animator>();
@@ -1123,6 +1204,9 @@ public class REPSEQ : MonoBehaviour {
             {
                 if (totalscore <= 0) sequence = 0;
                 else sequence = totalscore / (goalscore / 10);
+                if (Settings.DisableMovingButtons && ((sequence == 2) || (sequence == 3) || (sequence == 8))) sequence = 0;
+                if (Settings.DisableRotations && ((sequence == 5) || (sequence == 9))) sequence = 0;
+                if (Settings.DisableRotations && (sequence == 7)) sequence = 6;
                 switch (sequence)
                 {
                     case 0:
@@ -1212,6 +1296,7 @@ public class REPSEQ : MonoBehaviour {
 
     IEnumerator Startup() //Yeah this is the startup animation
     {
+        yield return new WaitForSeconds(10f);
         audio.PlaySoundAtTransform("Start1", transform);
         for (int i = 0; i < 8; i++)
         {
@@ -1336,6 +1421,6 @@ public class REPSEQ : MonoBehaviour {
     {
         timing += Time.deltaTime;
         animtiming += Time.deltaTime;
-        totalscore = (correctinputs*2) + onbeatinputs + (perfectsequences * 20) - incorrectinputs - (extrainputs * 4); //Constantly updates score so it doesn't need to change it at specific moments
+        totalscore = (correctinputs*Settings.CorrectPressGain) + (onbeatinputs*Settings.OnbeatPressGain) + (perfectsequences*Settings.PerfectSequenceBonus) - (incorrectinputs*Settings.IncorrectPressLoss) - (extrainputs*Settings.ExtraPressLoss); //Constantly updates score so it doesn't need to change it at specific moments
 	}
 }
